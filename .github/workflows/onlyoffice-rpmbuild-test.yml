@@ -109,16 +109,27 @@ jobs:
           mkdir -p /tmp/payload-upstream /tmp/payload-built
           (cd /tmp/payload-upstream && rpm2cpio "$upstream_main" | cpio -idm --quiet && rpm2cpio "$upstream_help" | cpio -idm --quiet)
           (cd /tmp/payload-built && rpm2cpio "$built" | cpio -idm --quiet && rpm2cpio "$built_help" | cpio -idm --quiet)
-          # Contents: only the seven files the %prep chrpath loop touches may differ.
-          drift=$(diff -rq /tmp/payload-upstream /tmp/payload-built 2>&1 | grep ' differ$' \
-            | grep -vE '/opt/onlyoffice/desktopeditors/(libvideoplayer\.so|libqtascdocumentscore\.so|libqgsttools_p\.so(\.1(\.0(\.0)?)?)?|DesktopEditors)$' || true)
+          # Contents: only the seven files the %prep chrpath loop touches may
+          # differ. diff -rq prints "Files <a> and <b> differ", so the two
+          # paths have to be pulled out of the line before they can be matched
+          # against the allowlist — filtering the raw line with a `path$`
+          # anchor never matches, because the line ends in " differ".
+          drift=$(diff -rq /tmp/payload-upstream /tmp/payload-built 2>&1 \
+            | awk '/ differ$/ {print $2; print $4}' \
+            | sed -e 's|^/tmp/payload-upstream||' -e 's|^/tmp/payload-built||' \
+            | sort -u \
+            | grep -vE '^/opt/onlyoffice/desktopeditors/(libvideoplayer\.so|libqtascdocumentscore\.so|libqgsttools_p\.so(\.1(\.0(\.0)?)?)?|DesktopEditors)$' || true)
           if [ -n "$drift" ]; then
             echo "ERROR: payload drifted from upstream:"
             echo "$drift"
             exit 1
           fi
           # File list: upstream's .build-id symlinks are the only entries we drop.
-          structure=$(diff <(cd /tmp/payload-upstream && find . | sort) <(cd /tmp/payload-built && find . | sort) \
+          # Written to files rather than using process substitution, because a
+          # container job's default shell is `sh -e`, which has no <(...).
+          (cd /tmp/payload-upstream && find . | sort) > /tmp/list-upstream.txt
+          (cd /tmp/payload-built && find . | sort) > /tmp/list-built.txt
+          structure=$(diff /tmp/list-upstream.txt /tmp/list-built.txt \
             | grep -E '^[<>]' | grep -vE '/usr/lib/\.build-id/' || true)
           if [ -n "$structure" ]; then
             echo "ERROR: unexpected file list difference:"
