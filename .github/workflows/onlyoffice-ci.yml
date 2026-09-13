@@ -196,7 +196,7 @@ jobs:
           # existing NVR in COPR (duplicate NVRs desync repodata from the
           # stored artifact and break dnf installs). The run ID makes every
           # forced submission distinct, e.g.
-          # onlyoffice-desktopeditors-9.4.0-1.f32042503024.
+          # onlyoffice-desktopeditors-<version>-1.f<run_id>.
           if [ "${{ inputs.force_build }}" = "true" ]; then
             sed -i "s/^Release:.*/Release: %{autorelease}.f${{ github.run_id }}/" specs/onlyoffice-desktopeditors.spec
           fi
@@ -212,8 +212,9 @@ jobs:
           # reports for that release asset. NOTE: same-origin integrity only —
           # it guards against truncated or substituted downloads, not a signing
           # boundary: upstream publishes no detached signatures, and the vendor
-          # yum repo's copy of 9.4.0 is in fact a different build with a
-          # different hash (see README.md), so it cannot be used as a reference.
+          # yum repo rebuilds from its own sources, so its copy of any given
+          # version is a different build with a different hash (see README.md)
+          # and cannot be used as a reference here.
           verify_rpm() {
             rpm_path="$1"
             expected="$2"

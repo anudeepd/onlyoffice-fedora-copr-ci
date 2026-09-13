@@ -33,25 +33,30 @@ enabled=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ONLYOFFICE
 ```
 
-Their `onlyoffice-desktopeditors` is built as `9.4.0-129.el7`; this repo builds
-the same upstream version as `9.4.0-1.fc44`. Release `129` outranks release
-`1`, so **if both repositories are enabled, `dnf` keeps theirs** and this
-package looks like it refuses to install. That is version precedence, not a
-package defect. Until a newer upstream version lands here (which theirs will
-not have until they rebuild), pick one:
+Their builds carry a high release number (e.g. `129.el7`, `172.el7`) because
+their packaging accumulates build iterations. This repo uses
+`Release: %{autorelease}`, which for an SRPM uploaded to COPR resolves to a
+literal `1` plus the chroot's dist tag — `1.fc44` on Fedora 44. rpm compares
+the release field segment by segment, numerically first, so `129.el7` outranks
+`1.fc44`, and **when both repositories are enabled `dnf` keeps theirs** while
+this package looks like it refuses to install.
+
+That is version precedence, not a package defect, and it holds for every
+shared version: this repo's release number never outranks theirs. Pick one:
 
 ```
 sudo dnf install --disablerepo=onlyoffice onlyoffice-desktopeditors
 ```
 
-or set a higher priority on the COPR repo, or simply install theirs — the
-payload is the same upstream release either way, and neither repo's copy is
-interchangeable at the byte level (their build is a different build of 9.4.0:
-sha256 `6b1c4da6…` for x86_64 vs the GitHub asset's `75b92cbe…`, which is why
-their published checksums cannot be used to validate this repo's sources).
+or set a higher priority on the COPR repo. Installing theirs is equally valid —
+the payload is the same upstream release either way. The two are not
+byte-identical, though: the vendor repo rebuilds from its own sources, so its
+RPM has a different sha256 from the GitHub release asset this repo packages
+(which is also why their published checksums cannot be used to verify this
+repo's sources).
 
 The `-help` subpackage collides the same way (`onlyoffice-desktopeditors-help`
-also exists in their repo at the same release).
+also exists in their repo).
 
 ## Packaging compliance
 

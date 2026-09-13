@@ -242,9 +242,11 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/org.onlyoffice.deskto
 # release), exactly as the earlier forced builds in these projects did.
 #
 # Note for anyone comparing against the vendor repo: ONLYOFFICE publishes this
-# same package name at 9.4.0-129.el7 in their own yum repository
-# (download.onlyoffice.com). Release 129 outranks Fedora's release 1, so with
-# both repositories enabled dnf keeps theirs. See README.md.
+# same package name in their own yum repository (download.onlyoffice.com) with
+# a high release number (e.g. 129.el7), while an SRPM uploaded to COPR gets
+# the literal release 1 plus the dist tag. rpm compares the release field
+# segment by segment, so theirs outranks ours for any shared version and dnf
+# prefers theirs when both repositories are enabled. See README.md.
 
 %files help
 /opt/onlyoffice/desktopeditors/editors/web-apps/apps/*/main/resources/help/
