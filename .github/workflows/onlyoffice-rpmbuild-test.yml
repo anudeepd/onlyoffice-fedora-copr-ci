@@ -124,18 +124,36 @@ jobs:
             echo "$drift"
             exit 1
           fi
-          # File list: upstream's .build-id symlinks are the only entries we drop.
+          # File list: compare removed and added entries against an explicit
+          # allowlist of the two intentional structural deltas.
           # Written to files rather than using process substitution, because a
           # container job's default shell is `sh -e`, which has no <(...).
           (cd /tmp/payload-upstream && find . | sort) > /tmp/list-upstream.txt
           (cd /tmp/payload-built && find . | sort) > /tmp/list-built.txt
-          structure=$(diff /tmp/list-upstream.txt /tmp/list-built.txt \
-            | grep -E '^[<>]' | grep -vE '/usr/lib/\.build-id/' || true)
-          if [ -n "$structure" ]; then
+          # Removed: the upstream /usr/lib/.build-id tree (symlinks into a
+          # debuginfo tree this package does not ship, dropped in %prep).
+          # Matches ./usr/lib, ./usr/lib/.build-id and anything beneath it.
+          removed=$(comm -23 /tmp/list-upstream.txt /tmp/list-built.txt \
+            | grep -vE '^\./usr/lib(/\.build-id(/.*)?)?$' || true)
+          # Added: the curated AppStream metainfo (upstream ships none) and its
+          # parent directory.
+          added=$(comm -13 /tmp/list-upstream.txt /tmp/list-built.txt \
+            | grep -vE '^\./usr/share/metainfo(/org\.onlyoffice\.desktopeditors\.metainfo\.xml)?$' || true)
+          if [ -n "$removed" ] || [ -n "$added" ]; then
             echo "ERROR: unexpected file list difference:"
-            echo "$structure"
+            [ -n "$removed" ] && echo "removed: $removed"
+            [ -n "$added" ] && echo "added: $added"
             exit 1
           fi
+          # The allowlist above only proves nothing ELSE changed. Assert the
+          # .build-id removal directly, otherwise a spec that stopped dropping
+          # it would leave both sides matching and pass silently.
+          if [ -e /tmp/list-built.txt ] && grep -qE '/usr/lib/\.build-id' /tmp/list-built.txt; then
+            echo "ERROR: built payload still ships /usr/lib/.build-id entries:"
+            grep -E '/usr/lib/\.build-id' /tmp/list-built.txt | head -5
+            exit 1
+          fi
+          echo "file list delta: $(comm -23 /tmp/list-upstream.txt /tmp/list-built.txt | grep -c .) removed (build-id), $(comm -13 /tmp/list-upstream.txt /tmp/list-built.txt | grep -c .) added (metainfo)"
           echo "chrpath delta: $(diff -rq /tmp/payload-upstream /tmp/payload-built 2>&1 | grep -c ' differ$') file(s)"
           echo "### Blob matches upstream outside the chrpath delta :heavy_check_mark:" >> $GITHUB_STEP_SUMMARY
       - name: Inspect built RPM Requires
