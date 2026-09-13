@@ -1,0 +1,71 @@
+# GUI app; upstream ships no man page, and the payload is doc-free by design.
+addFilter("no-manual-page-for-binary")
+# /opt/onlyoffice/desktopeditors is the upstream application layout; the blob
+# must ship with its paths intact (COPR-only rewrap, never eligible for
+# official Fedora).
+addFilter("dir-or-file-in-opt")
+# The prebuilt upstream binaries carry .symtab (unstripped) by design; see the
+# rationale next to %global debug_package %{nil} in the spec.
+addFilter("unstripped-binary-or-object")
+# The bundled Qt5/CEF libraries resolve each other via $ORIGIN (the launcher's
+# RPATH); required for the app to find its private libs. Upstream's
+# build-machine paths were removed in %prep, these are the load-bearing ones.
+addFilter("binary-or-shlib-defines-rpath")
+# chrome-sandbox ships mode 0755 (not setuid) and runs via user namespaces;
+# the setgroups finding is pattern-based and does not apply.
+addFilter("missing-call-to-setgroups-before-setuid")
+# CEF's network stack still calls gethostbyname (legacy IPv4 path); inherent
+# to the prebuilt CEF blob.
+addFilter("binary-or-shlib-calls-gethostbyname")
+
+# Dependency generation is deliberately suppressed for /opt (see the
+# __requires_exclude_from rationale in the spec) so that the bundled Qt5/ICU
+# stack is used instead of Fedora's, which means every dependency is declared
+# explicitly and some of them are lib-named. That is the intended design here,
+# not the redundant declaration this check is looking for.
+addFilter("explicit-lib-dependency")
+# Same cause: the prebuilt DesktopEditors launcher, the x2t converter and the
+# editors_helper are upstream-built non-PIE executables.
+addFilter("position-independent-executable-suggested")
+
+# Upstream's /usr/bin/onlyoffice-desktopeditors is a #!/bin/sh script the app
+# needs verbatim (its bytes are part of the byte-identity contract); rpmlint's
+# bashism hints do not apply to a script we do not maintain.
+addFilter("potential-bashisms")
+# CEF ships its own network stack and cannot follow the system OpenSSL crypto
+# policy; inherent to the prebuilt blob.
+addFilter("crypto-policy-non-compliance-openssl")
+
+# Upstream's web assets genuinely contain identical files across the six
+# editor trees (the same SVG icon reused under several names) and ~330 MB of
+# duplicated dictionary data. Collapsing them would need hardlinking, which
+# Fedora's linkdupes only performs under /usr — the payload must ship
+# byte-identical, so the duplication is inherited, not introduced. This also
+# covers the corresponding files-duplicated-waste finding.
+addFilter("files-duplicate")
+# Upstream ships 40 zero-byte iconshuge*.png placeholders (icon size variants
+# it never populated) in the editor web assets.
+addFilter("zero-length")
+# Bundled spell-check dictionaries ship their third-party license texts
+# verbatim, including the pre-2007 FSF address rpmlint looks for. Rewriting
+# them would break byte-identity and misrepresent upstream's license files.
+addFilter("incorrect-fsf-address")
+# Eleven slide-theme images in theme22 are mode 0600 upstream; the app reads
+# them as the invoking user, so the mode is inherited, not a packaging slip.
+addFilter("non-readable")
+# A bundled jQuery variant carries the executable bit upstream (it is loaded
+# by the editor, not executed); inherited from the blob.
+addFilter("script-without-shebang")
+# The -help subpackage is a pure data tree under /opt with no docs of its own;
+# the main package carries the licenses and changelog.
+addFilter("no-documentation")
+
+# %description wording rpmlint's dictionary does not know.
+addFilter("spelling-error .*rewraps")
+addFilter("spelling-error .*rewrap ")
+addFilter("spelling-error .*prebuilt")
+addFilter("spelling-error .*subpackage")
+addFilter("spelling-error .*noarch")
+addFilter("spelling-error .*docx")
+addFilter("spelling-error .*xlsx")
+addFilter("spelling-error .*pptx")

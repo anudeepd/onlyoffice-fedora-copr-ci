@@ -1,0 +1,209 @@
+# Build + install-test: rewrap upstream RPMs with Fedora spec
+name: onlyoffice Fedora RPM build + install test
+on: workflow_dispatch
+env:
+  REPO_DEV: ONLYOFFICE
+  REPO_NAME: DesktopEditors
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      # fedora:44 ships no git, so actions/checkout would silently fall back to
+      # downloading a source tarball and leave no .git behind.
+      - name: Install git
+        run: sudo dnf install -y -q git
+      - name: Checkout local
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: ${{ github.repository }}
+      # Steps run as root inside the container while the bind-mounted workspace
+      # is owned by the runner user (uid 1001), so git rejects the repository as
+      # dubiously owned. actions/checkout only records safe.directory in a
+      # temporary global config that it reverts.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install dependencies
+        run: sudo dnf install -y -q git gawk jq curl rpm-build rpmdevtools cpio desktop-file-utils appstream rpmlint chrpath binutils file
+      # A full build needs ~6 GB (1.08 GB of sources, ~1.4 GB buildroot, three
+      # RPMs plus the SRPM at ~2 GB). The runner image ships several GB of
+      # toolchains this container job never uses; reclaim them up front.
+      - name: Free disk space
+        run: |
+          df -h / | tail -1
+          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost \
+                 /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
+          df -h / | tail -1
+      - name: Get latest version
+        id: step_version
+        run: |
+          latest_release_tag=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/$REPO_DEV/$REPO_NAME/releases/latest | jq -r '.tag_name // empty')
+          if [ -z "$latest_release_tag" ]; then echo "ERROR: tag empty"; exit 1; fi
+          echo "VERSION=$latest_release_tag" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NO_V=$(echo "$latest_release_tag" | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+      - name: Patch spec and metainfo version
+        run: |
+          sed -i "s/^Version:.*/Version:        ${{ steps.step_version.outputs.VERSION_NO_V }}/" specs/onlyoffice-desktopeditors.spec
+          sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"${{ steps.step_version.outputs.VERSION_NO_V }}\" date=\"$(date +%F)\"|" sources/org.onlyoffice.desktopeditors.metainfo.xml
+          head -12 specs/onlyoffice-desktopeditors.spec
+      - name: Validate curated AppStream metadata
+        run: |
+          appstreamcli validate --no-net sources/org.onlyoffice.desktopeditors.metainfo.xml
+      - name: Build RPM locally
+        run: |
+          rpmdev-setuptree
+          # spectool fetches all three upstream RPMs (Source0/Source1 payloads
+          # plus the noarch help RPM as Source2). No fallback: a failed fetch
+          # fails the build.
+          cp sources/org.onlyoffice.desktopeditors.metainfo.xml $HOME/rpmbuild/SOURCES/
+          cp specs/onlyoffice-desktopeditors.spec $HOME/rpmbuild/SPECS/
+          cd $HOME/rpmbuild/SPECS
+          spectool -g -R onlyoffice-desktopeditors.spec
+          rpmbuild -ba onlyoffice-desktopeditors.spec 2>&1 | tail -15
+          ls -lh $HOME/rpmbuild/RPMS/*/
+      - name: Cross-build the aarch64 RPM and verify payload architectures
+        run: |
+          cd $HOME/rpmbuild/SPECS
+          # COPR builds every enabled chroot from the single submitted SRPM,
+          # so the aarch64 branch has to build here too. --target aarch64 is
+          # what selects %ifarch aarch64 in the spec, and with it the aarch64
+          # upstream blob; an arch-conditional Source that only the SRPM host
+          # fetched would fail this build with "Bad file: ...aarch64.rpm".
+          rpmbuild -bb --target aarch64 onlyoffice-desktopeditors.spec 2>&1 | tail -5
+          # The packaged launcher must match the package arch: an arch-mismatched
+          # source would repackage x86_64 binaries under an aarch64 NVR, which
+          # dnf cannot detect.
+          check_payload_arch() {
+            rpm_file="$1"; want="$2"
+            got=$(rpm2cpio "$rpm_file" | cpio -i --to-stdout --quiet ./opt/onlyoffice/desktopeditors/DesktopEditors 2>/dev/null | head -c 64 | file -)
+            echo "$rpm_file: $got"
+            case "$got" in
+              *"$want"*) ;;
+              *) echo "ERROR: $rpm_file does not carry a $want payload"; exit 1 ;;
+            esac
+          }
+          check_payload_arch "$(ls $HOME/rpmbuild/RPMS/x86_64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help | head -1)" "x86-64"
+          check_payload_arch "$(ls $HOME/rpmbuild/RPMS/aarch64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help | head -1)" "ARM aarch64"
+          # The help subpackage is noarch and carries no ELF at all; assert that
+          # rather than silently shipping an arch-tagged payload under a
+          # noarch NVR.
+          help_rpm=$(ls $HOME/rpmbuild/RPMS/noarch/onlyoffice-desktopeditors-help-*.rpm | head -1)
+          rpm -qp --qf '%{NAME} %{ARCH}\n' "$help_rpm"
+          if rpm2cpio "$help_rpm" | cpio -it --quiet 2>/dev/null | grep -qE '/(bin|lib|lib64)/'; then
+            echo "ERROR: $help_rpm ships files outside the help tree"; exit 1
+          fi
+      - name: Verify the payload is byte-identical to upstream outside the chrpath delta
+        run: |
+          # The spec's contract is that the payload ships exactly as upstream
+          # published it, apart from two documented deltas: the %prep chrpath
+          # removal of upstream's build-machine RPATH/RUNPATH entries, and the
+          # dropped upstream .build-id symlinks. Fedora's default brp hooks
+          # (brp-strip, brp-strip-comment-note, brp-mangle-shebangs, ...) or a
+          # silent macro change would otherwise only show up as a different
+          # binary.
+          upstream_main=$(ls $HOME/rpmbuild/SOURCES/onlyoffice-desktopeditors.x86_64.rpm | head -1)
+          upstream_help=$(ls $HOME/rpmbuild/SOURCES/onlyoffice-desktopeditors-help.noarch.rpm | head -1)
+          built=$(ls $HOME/rpmbuild/RPMS/x86_64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help | head -1)
+          built_help=$(ls $HOME/rpmbuild/RPMS/noarch/onlyoffice-desktopeditors-help-*.rpm | head -1)
+          rm -rf /tmp/payload-upstream /tmp/payload-built
+          mkdir -p /tmp/payload-upstream /tmp/payload-built
+          (cd /tmp/payload-upstream && rpm2cpio "$upstream_main" | cpio -idm --quiet && rpm2cpio "$upstream_help" | cpio -idm --quiet)
+          (cd /tmp/payload-built && rpm2cpio "$built" | cpio -idm --quiet && rpm2cpio "$built_help" | cpio -idm --quiet)
+          # Contents: only the seven files the %prep chrpath loop touches may differ.
+          drift=$(diff -rq /tmp/payload-upstream /tmp/payload-built 2>&1 | grep ' differ$' \
+            | grep -vE '/opt/onlyoffice/desktopeditors/(libvideoplayer\.so|libqtascdocumentscore\.so|libqgsttools_p\.so(\.1(\.0(\.0)?)?)?|DesktopEditors)$' || true)
+          if [ -n "$drift" ]; then
+            echo "ERROR: payload drifted from upstream:"
+            echo "$drift"
+            exit 1
+          fi
+          # File list: upstream's .build-id symlinks are the only entries we drop.
+          structure=$(diff <(cd /tmp/payload-upstream && find . | sort) <(cd /tmp/payload-built && find . | sort) \
+            | grep -E '^[<>]' | grep -vE '/usr/lib/\.build-id/' || true)
+          if [ -n "$structure" ]; then
+            echo "ERROR: unexpected file list difference:"
+            echo "$structure"
+            exit 1
+          fi
+          echo "chrpath delta: $(diff -rq /tmp/payload-upstream /tmp/payload-built 2>&1 | grep -c ' differ$') file(s)"
+          echo "### Blob matches upstream outside the chrpath delta :heavy_check_mark:" >> $GITHUB_STEP_SUMMARY
+      - name: Inspect built RPM Requires
+        run: |
+          # Native arch only: this is the RPM the install test below consumes.
+          rpm_file=$(ls $HOME/rpmbuild/RPMS/x86_64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help | head -1)
+          echo "=== Built RPM: $rpm_file ==="
+          rpm -qpR "$rpm_file"
+          echo "REQUIRES_OUTPUT_END"
+          # The dependency model is subtle (bundle-private SONAMEs excluded,
+          # system libs kept). Assert the parts that actually matter: nothing
+          # from the bundle may be required or provided, and the system libs
+          # only the bundled CEF declares (libnss3.so and friends) must be
+          # present. A regression here ships a package that cannot start.
+          reqs=$(rpm -qpR "$rpm_file")
+          leaks=$(printf '%s\n' "$reqs" | grep -cE '^lib(cef|Qt5Core|Qt5Gui|icudata|icuuc|kernel|hunspell|DjVuFile|qgsttools_p)\.so' || true)
+          if [ "$leaks" -ne 0 ]; then
+            echo "ERROR: bundle-private SONAMEs leaked into Requires:"; exit 1
+          fi
+          if rpm -qp --provides "$rpm_file" | grep -q '^lib'; then
+            echo "ERROR: bundle-private SONAMEs leaked into Provides (from /opt):"; exit 1
+          fi
+          for soname in libnss3.so libnspr4.so libsmime3.so libgtk-3.so.0 libasound.so.2; do
+            printf '%s\n' "$reqs" | grep -q "^$soname" \
+              || { echo "ERROR: $soname missing from Requires — bundle libs under /opt would not resolve at runtime"; exit 1; }
+          done
+          echo "Dependency model OK (no /opt leakage, system libs present)"
+      - name: Validate packaged desktop and AppStream metadata
+        run: |
+          rpm_file=$(ls $HOME/rpmbuild/RPMS/x86_64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help | head -1)
+          rm -rf /tmp/rpmbuild-check
+          mkdir -p /tmp/rpmbuild-check
+          cd /tmp/rpmbuild-check
+          rpm2cpio "$rpm_file" | cpio -idmu --quiet
+          desktop-file-validate usr/share/applications/onlyoffice-desktopeditors.desktop
+          appstreamcli validate --no-net usr/share/metainfo/org.onlyoffice.desktopeditors.metainfo.xml
+      - name: Run rpmlint
+        run: |
+          # Both arches plus the noarch help subpackage.
+          rpms="$(ls $HOME/rpmbuild/RPMS/x86_64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help) $(ls $HOME/rpmbuild/RPMS/aarch64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help) $(ls $HOME/rpmbuild/RPMS/noarch/onlyoffice-desktopeditors-help-*.rpm)"
+          # rpmlintrc documents every inherent blob finding (the /opt layout,
+          # the remaining $ORIGIN RPATHs, unstripped prebuilt binaries, the
+          # non-setuid chrome-sandbox tripping the setgroups pattern, CEF's
+          # legacy gethostbyname call, GUI app without a man page, ...).
+          # Anything else breaks this step.
+          rpmlint -r "$GITHUB_WORKSPACE/rpmlintrc" $rpms
+      - name: Install-test the rebuilt RPMs
+        run: |
+          # x86_64 only: the runner is x86_64 (the aarch64 RPM is covered by
+          # the cross-build's payload check and rpmlint above).
+          # --setopt=install_weak_deps=False keeps the pull to the declared
+          # requires, so a missing explicit dep shows up as a failed install.
+          main_rpm=$(ls $HOME/rpmbuild/RPMS/x86_64/onlyoffice-desktopeditors-[0-9]*.rpm | grep -v help | head -1)
+          help_rpm=$(ls $HOME/rpmbuild/RPMS/noarch/onlyoffice-desktopeditors-help-*.rpm | head -1)
+          echo "=== Installing $main_rpm + $help_rpm ==="
+          dnf in -y --setopt=install_weak_deps=False "$main_rpm" "$help_rpm" 2>&1 | tail -30
+          rpm -q onlyoffice-desktopeditors onlyoffice-desktopeditors-help
+          rpm -V onlyoffice-desktopeditors onlyoffice-desktopeditors-help
+          # The help tree must land where the app looks for it, and must not be
+          # owned by the main package.
+          test -d /opt/onlyoffice/desktopeditors/editors/web-apps/apps/common/main/resources/help
+          rpm -qf /opt/onlyoffice/desktopeditors/editors/web-apps/apps/common/main/resources/help | grep -qx onlyoffice-desktopeditors-help
+          # Every shared library the launcher needs must resolve on the
+          # installed system. This is the check that catches a broken
+          # __requires_exclude regex: libnss3.so is declared by the bundled
+          # libcef.so, not by any /usr/lib binary, so a too-broad exclusion
+          # drops it from Requires and dnf never installs it, leaving a package
+          # that aborts at startup with "error while loading shared libraries".
+          # ldd reports the bundle's own libs as missing because it cannot know
+          # about the launcher's $ORIGIN RPATH, so only libraries that are
+          # neither on the system nor present in the bundle count as failures.
+          bd=/opt/onlyoffice/desktopeditors
+          real=""
+          for lib in $(ldd "$bd/DesktopEditors" 2>/dev/null | awk '/=> not found/{print $1}'); do
+            [ -e "$bd/$lib" ] || real="$real $lib"
+          done
+          if [ -n "$real" ]; then
+            echo "ERROR: unresolved shared libraries after install:$real"
+            exit 1
+          fi
+          echo "All payload shared libraries resolve :heavy_check_mark:" >> $GITHUB_STEP_SUMMARY
+          echo "### Install test passed :heavy_check_mark:" >> $GITHUB_STEP_SUMMARY

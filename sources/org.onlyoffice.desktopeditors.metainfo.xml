@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Curated AppStream metadata for the ONLYOFFICE Desktop Editors COPR
+     rewrap. Upstream ships no AppStream file: the release RPMs carry no
+     /usr/share/metainfo entry and the source tree has no appdata.xml. The id
+     follows Flathub's org.onlyoffice.desktopeditors; the launchable points at
+     the desktop file this RPM actually ships. CI patches the <release>
+     version/date on each new upstream release. -->
+<component type="desktop-application">
+  <id>org.onlyoffice.desktopeditors</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>ONLYOFFICE Desktop Editors</name>
+  <summary>Desktop editors for text docs, spreadsheets, presentations, PDFs, and PDF forms</summary>
+  <description>
+    <p>
+      ONLYOFFICE Desktop Editors is a free and open-source office suite that
+      comprises editors for text documents, spreadsheets, presentations, PDFs
+      and PDF forms, along with a Diagram Viewer.
+    </p>
+    <p>
+      It lets you create, view and edit office documents stored on your PC
+      without an Internet connection, and is fully compatible with the Office
+      Open XML formats (.docx, .xlsx, .pptx). Plugins extend it further, and
+      the application can connect to a cloud office for online collaboration.
+    </p>
+  </description>
+  <categories>
+    <category>Office</category>
+    <category>WordProcessor</category>
+    <category>Spreadsheet</category>
+    <category>Presentation</category>
+  </categories>
+  <keywords>
+    <keyword>docx</keyword>
+    <keyword>xlsx</keyword>
+    <keyword>pptx</keyword>
+    <keyword>office</keyword>
+    <keyword>pdf</keyword>
+  </keywords>
+  <developer id="org.onlyoffice">
+    <name>ONLYOFFICE</name>
+  </developer>
+  <url type="homepage">https://www.onlyoffice.com</url>
+  <url type="bugtracker">https://github.com/ONLYOFFICE/DesktopEditors/issues</url>
+  <url type="vcs-browser">https://github.com/ONLYOFFICE/DesktopEditors</url>
+  <launchable type="desktop-id">onlyoffice-desktopeditors.desktop</launchable>
+  <provides>
+    <binary>onlyoffice-desktopeditors</binary>
+  </provides>
+  <releases>
+    <release version="9.4.0" date="2026-05-19"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
