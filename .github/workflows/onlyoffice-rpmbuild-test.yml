@@ -215,7 +215,10 @@ jobs:
           # The help tree must land where the app looks for it, and must not be
           # owned by the main package.
           test -d /opt/onlyoffice/desktopeditors/editors/web-apps/apps/common/main/resources/help
-          rpm -qf /opt/onlyoffice/desktopeditors/editors/web-apps/apps/common/main/resources/help | grep -qx onlyoffice-desktopeditors-help
+          # Ask rpm for the bare name: plain `rpm -qf` prints the full NEVRA,
+          # so an exact whole-line match against the package name never hits.
+          rpm -qf --qf '%{NAME}\n' /opt/onlyoffice/desktopeditors/editors/web-apps/apps/common/main/resources/help \
+            | grep -qx onlyoffice-desktopeditors-help
           # Every shared library the launcher needs must resolve on the
           # installed system. This is the check that catches a broken
           # __requires_exclude regex: libnss3.so is declared by the bundled
