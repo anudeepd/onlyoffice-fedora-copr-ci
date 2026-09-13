@@ -24,6 +24,13 @@ jobs:
     outputs:
       VERSION: ${{ steps.step_version.outputs.VERSION }}
       VERSION_NO_V: ${{ steps.step_version.outputs.VERSION_NO_V }}
+      # These three must be declared here as well as written to $GITHUB_OUTPUT:
+      # a step output is only visible inside its own job. Declaring the step
+      # outputs alone leaves the digests empty in the build job, where they are
+      # consumed — and an empty expected digest fails the comparison below.
+      DIGEST_X86: ${{ steps.step_version.outputs.DIGEST_X86 }}
+      DIGEST_ARM: ${{ steps.step_version.outputs.DIGEST_ARM }}
+      DIGEST_HELP: ${{ steps.step_version.outputs.DIGEST_HELP }}
     steps:
       - name: Install jq
         run: sudo apt-get update -y && sudo apt-get install -y jq
