@@ -33,13 +33,13 @@ enabled=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ONLYOFFICE
 ```
 
-Their builds carry a high release number (e.g. `129.el7`, `172.el7`) because
-their packaging accumulates build iterations. This repo uses
-`Release: %{autorelease}`, which for an SRPM uploaded to COPR resolves to a
-literal `1` plus the chroot's dist tag — `1.fc44` on Fedora 44. rpm compares
-the release field segment by segment, numerically first, so `129.el7` outranks
-`1.fc44`, and **when both repositories are enabled `dnf` keeps theirs** while
-this package looks like it refuses to install.
+Their builds carry a high numeric release because their packaging accumulates
+build iterations. This repo uses `Release: %{autorelease}`, which for an SRPM
+uploaded to COPR resolves to a literal `1` plus the chroot's dist tag — the
+release segment is `1` whatever the chroot. rpm compares the release field
+segment by segment, numerically first, so theirs outranks this repo's `1`, and
+**when both repositories are enabled `dnf` keeps theirs** while this package
+looks like it refuses to install.
 
 That is version precedence, not a package defect, and it holds for every
 shared version: this repo's release number never outranks theirs. Pick one:
@@ -170,10 +170,9 @@ works offline.
 
 ### Verification status
 
-Verified locally with a full `rpmbuild -ba` (9.4.0, rpm 6.0.2) plus a
-`--target aarch64` cross-build, in a `fedora:44` container, and by running the
-packaged application on a real desktop session (Fedora 44, Wayland +
-Xwayland):
+Verified locally with a full `rpmbuild -ba` plus a `--target aarch64`
+cross-build, in a `fedora` container, and by running the packaged application
+on a real desktop session (Wayland + Xwayland):
 
 - both arches build with `check-rpaths` enabled; the payload differs from the
   upstream RPM in exactly 7 files (the documented chrpath delta), with
